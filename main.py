@@ -1,14 +1,26 @@
+import os
+import sys
 import tkinter as tk
 from tkinter import Toplevel, messagebox
 import pygame
 from PIL import Image, ImageTk
+import time
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 # Initialize pygame mixer
 pygame.mixer.init()
 
 # Load the switch sound and alarm sound
-switch_sound = pygame.mixer.Sound("switchOn.wav")
-alarm_sound = pygame.mixer.Sound("alarmSound.wav")
+switch_sound = pygame.mixer.Sound(resource_path("sounds/switchOn.wav"))
+alarm_sound = pygame.mixer.Sound(resource_path("sounds/alarmSound.wav"))
 
 # Initialize the counter for wrong answers
 wrong_counter = 0
@@ -112,21 +124,33 @@ def update_counter_label():
     counter_label.config(text=f"Wrong Attempts: {wrong_counter}")
 
 def resize_canvas(event):
-    canvas.config(width=event.width, height=event.height)
-    canvas.coords(bg_image_id, 0, 0, event.width, event.height)
-    for i, pos in enumerate(light_positions):
-        new_x = pos[0] * event.width / 1000
-        new_y = pos[1] * event.height / 600
-        canvas.coords(lights[i], new_x - light_radius, new_y - light_radius, new_x + light_radius, new_y + light_radius)
+    global last_resize_time
+    current_time = time.time()
+    if current_time - last_resize_time > 0.1:  # Resize at most every 100ms
+        canvas.config(width=event.width, height=event.height)
+        resized_bg_image = bg_image.resize((event.width, event.height), Image.LANCZOS)
+        bg_photo = ImageTk.PhotoImage(resized_bg_image)
+        canvas.itemconfig(bg_image_id, image=bg_photo)
+        canvas.bg_photo = bg_photo  # Keep a reference to avoid garbage collection
+        for i, pos in enumerate(light_positions):
+            new_x = pos[0] * event.width / 1000
+            new_y = pos[1] * event.height / 600
+            canvas.coords(lights[i], new_x - light_radius, new_y - light_radius, new_x + light_radius, new_y + light_radius)
+        last_resize_time = current_time
+
+last_resize_time = time.time()
 
 ############################ CREATE INSTANCE OF WINDOW ############################
 
 root = tk.Tk()
 root.title("QUB Steam Plant Simulator")
-root.geometry('1000x1000')  # Adjusted to accommodate more buttons
+root.state('zoomed')  # Maximize the window
+
+# Set a minimum window size
+root.minsize(800, 600)
 
 # Load Logo
-logo_image = Image.open("logo2.png")
+logo_image = Image.open(resource_path("images/logo2.png"))
 logo_image = logo_image.resize((64, 64), Image.LANCZOS)
 logo_photo = ImageTk.PhotoImage(logo_image)
 
@@ -141,7 +165,7 @@ canvas = tk.Canvas(frame_image)
 canvas.pack(fill=tk.BOTH, expand=True)
 
 # Load the background image
-bg_image = Image.open("background.jpg")
+bg_image = Image.open(resource_path("images/background.jpg"))
 bg_photo = ImageTk.PhotoImage(bg_image)
 
 # Place the background image on the canvas
@@ -234,6 +258,8 @@ for i, button in enumerate(buttons):
 # Configure grid weights for buttons to make them resize proportionally
 for i in range(6):
     frame_buttons.grid_columnconfigure(i, weight=1)
+for i in range((len(button_names) + 5) // 6):  # Number of rows needed
+    frame_buttons.grid_rowconfigure(i, weight=1)
 
 # Add a label to display the counter for wrong attempts
 counter_label = tk.Label(frame_buttons, text=f"Wrong Attempts: {wrong_counter}", font=("Helvetica", 16))
