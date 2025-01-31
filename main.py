@@ -4,7 +4,6 @@ import tkinter as tk
 from tkinter import Toplevel, messagebox
 import pygame
 from PIL import Image, ImageTk
-import time
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -21,252 +20,258 @@ pygame.mixer.init()
 # Load the switch sound and alarm sound
 switch_sound = pygame.mixer.Sound(resource_path("sounds/switchOn.wav"))
 alarm_sound = pygame.mixer.Sound(resource_path("sounds/alarmSound.wav"))
+default = "#c9c9c9"
 
-# Initialize the counter for wrong answers
-wrong_counter = 0
+# Initialize variables
+current_mode = "startup"
+correct_order = []
+order = []
+lights = []
+last_incorrect_light = None
+flashing = False
+wrong_attempts = {"startup": 0, "shutdown": 0}  # Separate counters for each mode
 
 def play_sound():
     switch_sound.play()
 
 def play_alarm():
-    alarm_sound.play(loops=-1)  # Loop the alarm sound indefinitely
+    alarm_sound.play(loops=-1)
 
 def stop_alarm():
-    alarm_sound.stop()  # Stop the alarm sound
+    alarm_sound.stop()
 
 def check_order():
+    global order, flashing
     if order == correct_order:
-        messagebox.showinfo("Success", "Correct order!")
-        reset()
+        if current_mode == "shutdown":
+            for light in lights:
+                canvas.itemconfig(light, fill="#ff3730")
+            messagebox.showinfo("Success", "Correct shutdown order!")
+        else:
+            messagebox.showinfo("Success", "Correct startup order!")
+        return_to_main_menu()
     else:
         messagebox.showerror("Error", "Incorrect order! Restarting...")
-        reset()
+        reset_current_mode()
 
-def reset():
-    global order, flashing, wrong_counter
+def reset_current_mode():
+    global order, flashing
     order = []
     flashing = False
-    wrong_counter = 0  # Reset the counter to zero
-    update_counter_label()  # Update the counter label
-    stop_alarm()  # Stop the alarm sound when resetting
-    for button in buttons:
-        button.config(bg="SystemButtonFace")  # Reset button color to default
+    wrong_attempts[current_mode] = 0
+    update_counter_label()
+    stop_alarm()
+    initial_color = "#37eb34" if current_mode == "shutdown" else default
     for light in lights:
-        canvas.itemconfig(light, fill="grey")  # Reset light color to grey
+        canvas.itemconfig(light, fill=initial_color)
+
+def return_to_main_menu():
+    global order, flashing
+    order = []
+    flashing = False
+    stop_alarm()
+    simulation_frame.pack_forget()
+    start_menu.pack(fill=tk.BOTH, expand=True)
+    footer_label.pack(side='bottom', pady=10)  # Show footer
+    update_counter_label()
 
 def retry():
     global flashing
     flashing = False
-    stop_alarm()  # Stop the alarm sound when retrying
-    if last_incorrect_button:
-        last_incorrect_button.config(bg="SystemButtonFace")  # Reset the incorrect button color to default
-        # Reset the corresponding light color to grey
-        index = buttons.index(last_incorrect_button)
-        canvas.itemconfig(lights[index], fill="grey")
+    stop_alarm()
+    if last_incorrect_light:
+        initial_color = "#37eb34" if current_mode == "shutdown" else default
+        canvas.itemconfig(last_incorrect_light, fill=initial_color)
     for name in order:
-        index = button_names.index(name)
-        buttons[index].config(bg="#37eb34")  # Set the correct buttons back to #37eb34
-        canvas.itemconfig(lights[index], fill="#37eb34")  # Set the corresponding light to #37eb34
-    reset_button.pack_forget()  # Hide the retry button after retrying
+        index = light_names.index(name)
+        correct_color = "#ff3730" if current_mode == "shutdown" else "#37eb34"
+        canvas.itemconfig(lights[index], fill=correct_color)
+    reset_button.pack_forget()
 
-def flash_button(button, light):
+def flash_light(light):
     if flashing:
-        current_color = button.cget("bg")
-        next_color = "SystemButtonFace" if current_color == "#ff3730" else "#ff3730"
-        button.config(bg=next_color)
         light_color = canvas.itemcget(light, "fill")
-        next_light_color = "grey" if light_color == "#ff3730" else "#ff3730"
+        next_light_color = default if light_color == "#ff3730" else "#ff3730"
         canvas.itemconfig(light, fill=next_light_color)
-        button.after(500, lambda: flash_button(button, light))  # Continue flashing every 500ms
+        canvas.after(500, lambda: flash_light(light))
 
 def show_retry_window():
     retry_window = Toplevel(root)
     retry_window.title("Incorrect Order")
-    retry_window.geometry("300x150")
     
-    # Bind the window close event to a custom function that calls reset and destroys the window
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    window_width = 300
+    window_height = 150
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+    
+    retry_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    
     def on_closing():
-        reset()
+        reset_current_mode()
         retry_window.destroy()
     
-    retry_window.protocol("WM_DELETE_WINDOW", on_closing)  # Bind the window close event to the custom function
-    retry_window.attributes("-toolwindow", True)  # Remove minimize and maximize buttons
+    retry_window.protocol("WM_DELETE_WINDOW", on_closing)
+    retry_window.attributes("-toolwindow", True)
 
     tk.Label(retry_window, text="Incorrect order! Try again...").pack(pady=10)
     tk.Button(retry_window, text="Go Back", command=lambda: [retry(), retry_window.destroy()]).pack(pady=5)
-    tk.Button(retry_window, text="Reset", command=lambda: [reset(), retry_window.destroy()]).pack(pady=5)
-    retry_window.grab_set()  # Make the retry window modal
+    tk.Button(retry_window, text="Reset", command=lambda: [reset_current_mode(), retry_window.destroy()]).pack(pady=5)
+    retry_window.grab_set()
 
-def button_click(name, button, light):
-    global last_incorrect_button, flashing, wrong_counter
-    play_sound()  # Play sound on button click
-    if order and name == order[-1]:  # Check if the button is the last one in the order
+def light_click(event, name, light):
+    global last_incorrect_light, flashing
+    play_sound()
+    initial_color = "#37eb34" if current_mode == "shutdown" else default
+    correct_color = "#ff3730" if current_mode == "shutdown" else "#37eb34"
+    
+    if order and name == order[-1]:
         order.pop()
-        button.config(bg="SystemButtonFace")  # Change the button color back to default if unselected
-        canvas.itemconfig(light, fill="grey")  # Change the light color back to grey if unselected
+        canvas.itemconfig(light, fill=initial_color)
     else:
         if len(order) < len(correct_order) and name == correct_order[len(order)]:
             order.append(name)
-            button.config(bg="#37eb34")  # Change the specific button color to #37eb34 if correct
-            canvas.itemconfig(light, fill="#37eb34")  # Change the corresponding light color to #37eb34 if correct
+            canvas.itemconfig(light, fill=correct_color)
             if len(order) == len(correct_order):
                 check_order()
         else:
-            last_incorrect_button = button  # Store the reference to the incorrect button
+            last_incorrect_light = light
             flashing = True
-            flash_button(button, light)  # Start flashing the button and light
-            play_alarm()  # Play the alarm sound
-            show_retry_window()  # Show the custom retry window
-            wrong_counter += 1  # Increment the counter for wrong answers
-            update_counter_label()  # Update the counter label
+            flash_light(light)
+            play_alarm()
+            show_retry_window()
+            wrong_attempts[current_mode] += 1
+            update_counter_label()
 
 def update_counter_label():
-    counter_label.config(text=f"Wrong Attempts: {wrong_counter}")
+    counter_label.config(text=f"Wrong Attempts: {wrong_attempts[current_mode]}")
 
-def resize_canvas(event):
-    global last_resize_time
-    current_time = time.time()
-    if current_time - last_resize_time > 0.1:  # Resize at most every 100ms
-        canvas.config(width=event.width, height=event.height)
-        resized_bg_image = bg_image.resize((event.width, event.height), Image.LANCZOS)
-        bg_photo = ImageTk.PhotoImage(resized_bg_image)
-        canvas.itemconfig(bg_image_id, image=bg_photo)
-        canvas.bg_photo = bg_photo  # Keep a reference to avoid garbage collection
-        for i, pos in enumerate(light_positions):
-            new_x = pos[0] * event.width / 1000
-            new_y = pos[1] * event.height / 600
-            canvas.coords(lights[i], new_x - light_radius, new_y - light_radius, new_x + light_radius, new_y + light_radius)
-        last_resize_time = current_time
+def select_mode(mode):
+    global current_mode, correct_order
+    current_mode = mode
+    correct_order = light_names[:] if mode == "startup" else list(reversed(light_names))
+    
+    start_menu.pack_forget()
+    footer_label.pack_forget()  # Hide footer
+    simulation_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Reset counters and lights for the selected mode
+    wrong_attempts[current_mode] = 0
+    initial_color = "#37eb34" if mode == "shutdown" else default
+    for light in lights:
+        canvas.itemconfig(light, fill=initial_color)
+    
+    update_counter_label()
 
-last_resize_time = time.time()
-
-############################ CREATE INSTANCE OF WINDOW ############################
+############################ CREATE WINDOWS AND FRAMES ############################
 
 root = tk.Tk()
 root.title("QUB Steam Plant Simulator")
-root.state('zoomed')  # Maximize the window
-
-# Set a minimum window size
+root.attributes('-fullscreen', True)
 root.minsize(800, 600)
 
-# Load Logo
+# Create footer label (initially hidden)
+footer_label = tk.Label(
+    root, 
+    text="Created by IT HUB CHEM-ENG",
+    font=("Helvetica", 10),
+    fg="gray"
+)
+
+# Start Menu Frame
+start_menu = tk.Frame(root)
+
+# Add Logo to Start Menu
+logo_main_image = Image.open(resource_path("images/image.png"))
+logo_main_image = logo_main_image.resize((800, 200), Image.LANCZOS)
+logo_main_photo = ImageTk.PhotoImage(logo_main_image)
+logo_label = tk.Label(start_menu, image=logo_main_photo)
+logo_label.image = logo_main_photo  # Keep reference
+logo_label.pack(pady=(80, 20))  # Add padding at top and bottom
+
+title_label = tk.Label(start_menu, text="Steam Plant Simulator", font=("Helvetica", 24))
+title_label.pack(pady=20)
+
+startup_btn = tk.Button(start_menu, text="Startup", command=lambda: select_mode("startup"), width=15, height=2)
+startup_btn.pack(pady=20)
+
+shutdown_btn = tk.Button(start_menu, text="Shutdown", command=lambda: select_mode("shutdown"), width=15, height=2)
+shutdown_btn.pack(pady=20)
+
+exit_btn = tk.Button(start_menu, text="Exit", command=root.destroy, width=15, height=2)
+exit_btn.pack(pady=20)
+
+# Simulation Frame
+simulation_frame = tk.Frame(root)
+
+# Load Window Logo
 logo_image = Image.open(resource_path("images/logo2.png"))
 logo_image = logo_image.resize((64, 64), Image.LANCZOS)
 logo_photo = ImageTk.PhotoImage(logo_image)
-
 root.iconphoto(False, logo_photo)
 
-# Create a frame for the background image and lights
-frame_image = tk.Frame(root)
-frame_image.grid(row=0, column=0, sticky="nsew")
-
-# Create a canvas to hold the background image and other widgets
+# Create canvas and widgets inside simulation_frame
+frame_image = tk.Frame(simulation_frame)
+frame_image.pack(fill=tk.BOTH, expand=True)
 canvas = tk.Canvas(frame_image)
 canvas.pack(fill=tk.BOTH, expand=True)
 
-# Load the background image
-bg_image = Image.open(resource_path("images/background.jpg"))
+# Background Image
+bg_image = Image.open(resource_path("images/background.png"))
+screen_width = root.winfo_screenwidth()
+screen_height = root.winfo_screenheight()
+bg_image = bg_image.resize((screen_width, screen_height), Image.LANCZOS)
 bg_photo = ImageTk.PhotoImage(bg_image)
+canvas.create_image(0, 0, anchor=tk.NW, image=bg_photo)
 
-# Place the background image on the canvas
-bg_image_id = canvas.create_image(0, 0, anchor=tk.NW, image=bg_photo)
+# Control Buttons
+exit_button = tk.Button(simulation_frame, text="Exit", command=root.destroy, bg="red", fg="white", height=2, width=10, font=10)
+exit_button.place(relx=1.0, rely=0.0, anchor='ne')
 
-# Bind the canvas resize event
-canvas.bind("<Configure>", resize_canvas)
+main_menu_btn = tk.Button(simulation_frame, text="Main Menu", command=return_to_main_menu, bg="blue", fg="white", height=2, width=10)
+main_menu_btn.place(relx=0.65, rely=0.95, anchor='s')
 
-# Create a frame for the buttons
-frame_buttons = tk.Frame(root)
-frame_buttons.grid(row=1, column=0, sticky="nsew")
+reset_button = tk.Button(simulation_frame, text="Reset", command=reset_current_mode, bg="#ff3730", fg="white", height=2, width=10)
+reset_button.place(relx=0.5, rely=0.95, anchor='s')
 
-# Configure grid weights to make the frames resize proportionally
-root.grid_rowconfigure(0, weight=1)
-root.grid_rowconfigure(1, weight=1)
-root.grid_columnconfigure(0, weight=1)
+counter_label = tk.Label(simulation_frame, text=f"Wrong Attempts: 0", font=("Helvetica", 16))
+counter_label.place(relx=0.5, rely=0.9, anchor='s')
 
-################################## MAIN METHOD ##################################
 
-button_names = [
+# Light configuration
+light_names = [
     "V1", "V3", "V4", "V2", "P1", "P2", "V5", "V6", "P3", "F2", "V9", "F1",
     "V7", "V8", "P4", "F4", "V14", "F3", "V12", "V13", "P5", "V17", "V18", "P6",
     "V19", "V20", "V16", "V15", "V10", "P7", "V28", "V29", "P12", "V24", "V25",
     "P9", "V26", "V27", "P11", "V30", "P10", "V22", "V23", "V21", "P8", "V11"
 ]
-correct_order = button_names[:]  # The correct order is the same as the button names list
-order = []
-buttons = []
-lights = []
-last_incorrect_button = None
-flashing = False
 
-# Calculate the number of buttons per section
-num_buttons = len(button_names)
-num_sections = 3
-buttons_per_section = num_buttons // num_sections
-extra_buttons = num_buttons % num_sections
-
-# Split buttons into different sections
-section1_buttons = button_names[:buttons_per_section + (1 if extra_buttons > 0 else 0)]
-section2_buttons = button_names[buttons_per_section + (1 if extra_buttons > 0 else 0):2 * buttons_per_section + (1 if extra_buttons > 1 else 0)]
-section3_buttons = button_names[2 * buttons_per_section + (1 if extra_buttons > 1 else 0):]
-
-# Place buttons in section 1
-for i, name in enumerate(section1_buttons):
-    button = tk.Button(frame_buttons, text=name)
-    button.config(command=lambda name=name, b=button, l=None: button_click(name, b, l), height=1, width=3, font=5)
-    button.grid(row=i//6, column=i%6, padx=5, pady=5, sticky="nsew")
-    buttons.append(button)
-
-# Place buttons in section 2
-for i, name in enumerate(section2_buttons):
-    button = tk.Button(frame_buttons, text=name)
-    button.config(command=lambda name=name, b=button, l=None: button_click(name, b, l), height=1, width=3, font=5)
-    button.grid(row=(i + len(section1_buttons))//6, column=(i + len(section1_buttons))%6, padx=5, pady=5, sticky="nsew")
-    buttons.append(button)
-
-# Place buttons in section 3
-for i, name in enumerate(section3_buttons):
-    button = tk.Button(frame_buttons, text=name)
-    button.config(command=lambda name=name, b=button, l=None: button_click(name, b, l), height=1, width=3, font=5)
-    button.grid(row=(i + len(section1_buttons) + len(section2_buttons))//6, column=(i + len(section1_buttons) + len(section2_buttons))%6, padx=5, pady=5, sticky="nsew")
-    buttons.append(button)
-
-# Create lights on the canvas
-light_radius = 10  # Radius of the circular lights
+light_radius = 13
 light_positions = [
-    (700, 40), (750, 40), (800, 40), (850, 40), (900, 40), (950, 40),
-    (700, 90), (750, 90), (800, 90), (850, 90), (900, 90), (950, 90),
-    (700, 140), (750, 140), (800, 140), (850, 140), (900, 140), (950, 140),
-    (700, 190), (750, 190), (800, 190), (850, 190), (900, 190), (950, 190),
-    (700, 240), (750, 240), (800, 240), (850, 240), (900, 240), (950, 240),
-    (700, 290), (750, 290), (800, 290), (850, 290), (900, 290), (950, 290),
-    (700, 340), (750, 340), (800, 340), (850, 340), (900, 340), (950, 340),
-    (700, 390), (750, 390), (800, 390), (850, 390)
+    (114, 111), (223, 202), (274, 354), (177, 104), (147, 120), (227, 305),
+    (616, 221), (684, 215), (651, 233), (778, 106), (666, 387), (700, 399),
+    (616, 324), (683, 318), (650, 336), (1329, 142), (1177, 392), (1222, 404),
+    (1152, 328), (1206, 321), (1176, 344), (1578, 800), (1666, 794), (1620, 810),
+    (1558, 870), (1668, 877), (1726, 692), (1695,292 ), (1067,192 ), (1619,888 ),
+    (82,477 ), (182,435 ), (117,487 ), (686, 882), (757,872 ), (717,894 ),
+    (556,1021 ), (664, 961), (603,1032 ), (115, 528), (812, 932), (973,848 ),
+    (1045,842 ), (960,805 ), (1007,859 ), (871,112 )
 ]
 
-for pos in light_positions:
+# Create lights on the canvas
+lights = []
+for i, pos in enumerate(light_positions):
     light = canvas.create_oval(
         pos[0] - light_radius, pos[1] - light_radius,
         pos[0] + light_radius, pos[1] + light_radius,
-        fill="grey"
+        fill=default
     )
     lights.append(light)
+    text = canvas.create_text(pos[0], pos[1], text=light_names[i], fill="black", font=("Helvetica", 10))
+    canvas.tag_bind(light, '<Button-1>', lambda event, name=light_names[i], l=light: light_click(event, name, l))
+    canvas.tag_bind(text, '<Button-1>', lambda event, name=light_names[i], l=light: light_click(event, name, l))
 
-# Update button commands to include corresponding lights
-for i, button in enumerate(buttons):
-    button.config(command=lambda name=button_names[i], b=button, l=lights[i]: button_click(name, b, l))
-
-# Configure grid weights for buttons to make them resize proportionally
-for i in range(6):
-    frame_buttons.grid_columnconfigure(i, weight=1)
-for i in range((len(button_names) + 5) // 6):  # Number of rows needed
-    frame_buttons.grid_rowconfigure(i, weight=1)
-
-# Add a label to display the counter for wrong attempts
-counter_label = tk.Label(frame_buttons, text=f"Wrong Attempts: {wrong_counter}", font=("Helvetica", 16))
-counter_label.grid(row=8, column=0, columnspan=6, pady=10)
-
-# Add the reset button at the bottom
-reset_button = tk.Button(frame_buttons, text="Reset", command=reset, bg="#ff3730", fg="white", height=2, width=10)
-reset_button.grid(row=9, column=0, columnspan=6, pady=10)  # Adjust the position as needed
-
+start_menu.pack(fill=tk.BOTH, expand=True)
+footer_label.pack(side='bottom', pady=10)
 root.mainloop()
